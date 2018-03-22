@@ -171,6 +171,8 @@ namespace SteamKit2
             }
         }
 
+        
+
         /// <summary>
         /// This callback is received in response to calling <see cref="SteamApps.GetAppOwnershipTicket"/>.
         /// </summary>

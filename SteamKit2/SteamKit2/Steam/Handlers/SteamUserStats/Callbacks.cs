@@ -161,5 +161,35 @@ namespace SteamKit2
                 Entries = new ReadOnlyCollection<LeaderboardEntry>( list );
             }
         }
+
+
+        /// <summary>
+        /// This callback is fired in response to <see cref=" GetUserStats" />.
+        /// </summary>
+        public sealed class GetUserStatsCallback : CallbackMsg
+        {
+
+            /// <summary>
+            /// Gets the result of the request.
+            /// </summary>
+            public EResult Result { get; private set; }
+
+            /// <summary>
+            /// Gets the UserStats Schema
+            /// </summary>
+            public KeyValue Schema { get; private set; }
+
+            internal GetUserStatsCallback(JobID jobid, CMsgClientGetUserStatsResponse resp)
+            {
+                this.JobID = jobid;
+                var kv = new KeyValue("UserStats");
+                if (resp.schemaSpecified)
+                {
+                    kv.TryReadAsBinary(new MemoryStream(resp.schema));
+                    this.Schema = kv;
+                }
+                this.Result = (EResult)resp.eresult;
+            }
+        }
     }
 }

@@ -25,6 +25,7 @@ namespace SteamKit2
                 { EMsg.ClientGetNumberOfCurrentPlayersDPResponse, HandleNumberOfPlayersResponse },
                 { EMsg.ClientLBSFindOrCreateLBResponse, HandleFindOrCreateLBResponse },
                 { EMsg.ClientLBSGetLBEntriesResponse, HandleGetLBEntriesRespons },
+                { EMsg.ClientGetUserStatsResponse, HandeGetUserStatsRespsonse},
             };
         }
 
@@ -36,8 +37,10 @@ namespace SteamKit2
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="NumberOfPlayersCallback"/>.</returns>
         public AsyncJob<NumberOfPlayersCallback> GetNumberOfCurrentPlayers( uint appId )
         {
-            var msg = new ClientMsgProtobuf<CMsgDPGetNumberOfCurrentPlayers>( EMsg.ClientGetNumberOfCurrentPlayersDP );
-            msg.SourceJobID = Client.GetNextJobID();
+            var msg = new ClientMsgProtobuf<CMsgDPGetNumberOfCurrentPlayers>(EMsg.ClientGetNumberOfCurrentPlayersDP)
+            {
+                SourceJobID = Client.GetNextJobID()
+            };
 
             msg.Body.appid = appId;
 
@@ -56,8 +59,10 @@ namespace SteamKit2
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="FindOrCreateLeaderboardCallback"/>.</returns>
         public AsyncJob<FindOrCreateLeaderboardCallback> FindLeaderboard( uint appId, string name )
         {
-            var msg = new ClientMsgProtobuf<CMsgClientLBSFindOrCreateLB>( EMsg.ClientLBSFindOrCreateLB );
-            msg.SourceJobID = Client.GetNextJobID();
+            var msg = new ClientMsgProtobuf<CMsgClientLBSFindOrCreateLB>(EMsg.ClientLBSFindOrCreateLB)
+            {
+                SourceJobID = Client.GetNextJobID()
+            };
 
             // routing_appid has to be set correctly to receive a response
             msg.ProtoHeader.routing_appid = appId;
@@ -82,8 +87,10 @@ namespace SteamKit2
         /// <returns>The Job ID of the request. This can be used to find the appropriate <see cref="FindOrCreateLeaderboardCallback"/>.</returns>
         public AsyncJob<FindOrCreateLeaderboardCallback> CreateLeaderboard( uint appId, string name, ELeaderboardSortMethod sortMethod, ELeaderboardDisplayType displayType )
         {
-            var msg = new ClientMsgProtobuf<CMsgClientLBSFindOrCreateLB>( EMsg.ClientLBSFindOrCreateLB );
-            msg.SourceJobID = Client.GetNextJobID();
+            var msg = new ClientMsgProtobuf<CMsgClientLBSFindOrCreateLB>(EMsg.ClientLBSFindOrCreateLB)
+            {
+                SourceJobID = Client.GetNextJobID()
+            };
 
             // routing_appid has to be set correctly to receive a response
             msg.ProtoHeader.routing_appid = appId;
@@ -112,8 +119,10 @@ namespace SteamKit2
         /// <param name="dataRequest">Type of request.</param>
         public AsyncJob<LeaderboardEntriesCallback> GetLeaderboardEntries( uint appId, int id, int rangeStart, int rangeEnd, ELeaderboardDataRequest dataRequest )
         {
-            var msg = new ClientMsgProtobuf<CMsgClientLBSGetLBEntries>( EMsg.ClientLBSGetLBEntries );
-            msg.SourceJobID = Client.GetNextJobID();
+            var msg = new ClientMsgProtobuf<CMsgClientLBSGetLBEntries>(EMsg.ClientLBSGetLBEntries)
+            {
+                SourceJobID = Client.GetNextJobID()
+            };
 
             // routing_appid has to be set correctly to receive a response
             msg.ProtoHeader.routing_appid = appId;
@@ -127,6 +136,25 @@ namespace SteamKit2
             Client.Send( msg );
 
             return new AsyncJob<LeaderboardEntriesCallback>( this.Client, msg.SourceJobID );
+        }
+
+        /// <summary>
+        /// Asks the Steam back-end for UserStats for a game
+                /// Results are returned in a <see cref="LeaderboardEntriesCallback"/>.
+        /// The returned <see cref="AsyncJob{T}"/> can also be awaited to retrieve the callback result.
+        /// </summary>
+        /// <param name="appId">The AppID to request stats for.</param>        
+        public AsyncJob<GetUserStatsCallback> GetUserStats(uint appId)
+        {
+            var msg = new ClientMsgProtobuf<CMsgClientGetUserStats>(EMsg.ClientGetUserStats)
+            {
+                SourceJobID = Client.GetNextJobID()
+            };
+            msg.Body.game_id = appId;
+
+            this.Client.Send(msg);
+
+            return new AsyncJob<GetUserStatsCallback>(this.Client, msg.SourceJobID);
         }
 
         /// <summary>
@@ -173,6 +201,13 @@ namespace SteamKit2
 
             var callback = new LeaderboardEntriesCallback( msg.TargetJobID, msg.Body );
             Client.PostCallback( callback );
+        }
+
+        void HandeGetUserStatsRespsonse(IPacketMsg packetMsg)
+        {
+            var resp = new ClientMsgProtobuf<CMsgClientGetUserStatsResponse>(packetMsg);
+            var callback = new GetUserStatsCallback(resp.TargetJobID, resp.Body);
+            this.Client.PostCallback(callback);
         }
         #endregion
     }

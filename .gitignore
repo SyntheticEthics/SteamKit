@@ -120,3 +120,4 @@ cryptopp/
 # misc
 Thumbs.db
 .DS_Store
+/SteamKit2/.idea/.idea.SteamKit2
