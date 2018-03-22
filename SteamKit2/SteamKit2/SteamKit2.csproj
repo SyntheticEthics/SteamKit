@@ -1,5 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
-
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -12,16 +11,13 @@
     <RepositoryUrl>https://github.com/SteamRE/SteamKit</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
-
   <PropertyGroup>
     <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\SteamKit2.xml</DocumentationFile>
   </PropertyGroup>
-
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
     <DebugType>full</DebugType>
     <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
-  
   <ItemGroup>
     <None Remove="3rd party.txt" />
     <None Remove="changes.txt" />
@@ -31,30 +27,28 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="3rd party.txt">
-        <Pack>true</Pack>
-        <PackagePath />
+      <Pack>true</Pack>
+      <PackagePath />
     </Content>
     <Content Include="changes.txt">
-        <Pack>true</Pack>
-        <PackagePath>readme.txt</PackagePath>
+      <Pack>true</Pack>
+      <PackagePath>readme.txt</PackagePath>
     </Content>
     <Content Include="gpl.txt">
-        <Pack>true</Pack>
-        <PackagePath />
+      <Pack>true</Pack>
+      <PackagePath />
     </Content>
     <Content Include="lgpl.txt">
-        <Pack>true</Pack>
-        <PackagePath />
+      <Pack>true</Pack>
+      <PackagePath />
     </Content>
     <Content Include="license.txt">
-        <Pack>true</Pack>
-        <PackagePath />
+      <Pack>true</Pack>
+      <PackagePath />
     </Content>
   </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="protobuf-net" Version="2.1.0" />
     <PackageReference Include="Microsoft.Win32.Registry" Version="4.4.0" />
   </ItemGroup>
-
 </Project>

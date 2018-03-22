@@ -80,6 +80,21 @@ namespace SteamKit2
             }
         }
 
+        public static byte[] ReadBytes(this Stream stream, int len)
+        {
+            byte[] buffer = new byte[len];
+
+            while (len > buffer.Length)
+            {
+
+                stream.Read(buffer, 0, buffer.Length);
+                len -= buffer.Length;
+            }
+
+            stream.Read(buffer, 0, len);
+            return buffer;
+        }
+        
         public static void WriteNullTermString( this Stream stream, string value, Encoding encoding )
         {
             var dataLength = encoding.GetByteCount( value );

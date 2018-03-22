@@ -3,185 +3,379 @@
  * file 'license.txt', which is part of this source code package.
  */
 
+using ProtoBuf;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
+using ProtoBuf.Meta;
 
 namespace SteamKit2
 {
+
     /// <summary>
-    /// Represents the binary Steam3 manifest format.
+    /// 
     /// </summary>
-    sealed class Steam3Manifest
+    public class Manifest
     {
-        public sealed class FileMapping
+        private const int ProtobufPayloadMagic = 0x71F617D0;
+        private const int ProtobufMetadataMagic = 0x1F4812BE;
+        private const int ProtobufSignatureMagic = 0x1B81B817;
+        private const int ProtobufEndofmanifestMagic = 0x32C415AB;
+
+        private Payload _payload;
+        private Metadata _metadata;
+        private Signature _signature;
+
+        /// <summary>
+        /// returns all mappings except those with EDepotFileFlag.Directory flag
+        /// </summary>
+        public List<FileMapping> Files =>_payload.Mappings.Where(x => x.Flags.HasFlag(EDepotFileFlag.Directory) == false).ToList();
+        /// <summary>
+        /// returns mappings with EDepotFileFlag.Directory flag
+        /// </summary>
+        public List<FileMapping> Directories => _payload.Mappings.Where(x => x.Flags.HasFlag(EDepotFileFlag.Directory)).ToList();
+        /// <summary>
+        /// returns mappings with EDepotFileFlag.InstallScript flag
+        /// </summary>
+        public List<FileMapping> InstallScripts => _payload.Mappings.Where(x => x.Flags.HasFlag(EDepotFileFlag.InstallScript)).ToList();
+
+
+        
+        /// <summary>
+        /// Load manifest from byte array
+        /// </summary>
+        /// <param name="data"></param>
+        public Manifest(byte[] data)
         {
-            public sealed class Chunk
+            ReadManifestData(data);
+        }
+
+        /// <summary>
+        /// Load manifest from file
+        /// </summary>
+        /// <param name="path"></param>
+        /// <exception cref="FileNotFoundException"></exception>
+        public Manifest(string path)
+        {
+            if (!File.Exists(path))
+                throw new FileNotFoundException($"Manifest file not found at '{path}'", path);
+
+            ReadManifestData(File.ReadAllBytes(path));
+        }
+
+        private void ReadManifestData(byte[] data)
+        {
+            using (var reader = new MemoryStream(data))
             {
-                public byte[] ChunkGID { get; set; } // sha1 hash for this chunk
 
-                public byte[] Checksum { get; set; }
-                public ulong Offset { get; set; }
-
-                public uint DecompressedSize { get; set; }
-                public uint CompressedSize { get; set; }
-
-
-                internal void Deserialize( BinaryReader ds )
+                while (reader.Position < reader.Length)
                 {
-                    ChunkGID = ds.ReadBytes( 20 );
+                    var magic = reader.ReadInt32();
 
-                    Checksum = ds.ReadBytes( 4 );
+                    switch (magic)
+                    {
+                        case ProtobufPayloadMagic:
+                            var payloadLength = reader.ReadUInt32();
+                            var payloadBytes = reader.ReadBytes((int)payloadLength);
+                            using (var msPayload = new MemoryStream(payloadBytes))
+                                _payload = Serializer.Deserialize<Payload>(msPayload);
 
-                    Offset = ds.ReadUInt64();
+                            break;
+                        case ProtobufMetadataMagic:
+                            var metadataLength = reader.ReadUInt32();
+                            var metadataBytes = reader.ReadBytes((int)metadataLength);
+                            using (var msMetadata = new MemoryStream(metadataBytes))
+                                _metadata = Serializer.Deserialize<Metadata>(msMetadata);
+                            break;
 
-                    DecompressedSize = ds.ReadUInt32();
-                    CompressedSize = ds.ReadUInt32();
+                        case ProtobufSignatureMagic:
+                            var signatureLength = reader.ReadUInt32();
+                            var signatureBytes = reader.ReadBytes((int)signatureLength);
+                            using (var msSignature = new MemoryStream(signatureBytes))
+                                _signature = Serializer.Deserialize<Signature>(msSignature);
+                            break;
+
+                        case ProtobufEndofmanifestMagic:
+                            break;
+
+                        default:
+                            throw new Exception(string.Format("Unrecognized magic value {0:X} in depot manifest.", magic));
+                    }
+                }
+
+            }
+        }
+
+        
+        /// <summary>
+        /// Decrypts filenames 
+        /// </summary>
+        /// <param name="encryptionKey"></param>
+        /// <returns></returns>
+        public bool DecryptFilenames(byte[] encryptionKey)
+        {
+            if (!_metadata.FilenamesEncrypted)
+                return true;
+
+            foreach (var file in _payload.Mappings)
+            {
+                byte[] encodedFilename = Convert.FromBase64String(file.FileName);
+                byte[] filename;
+                try
+                {
+                    filename = CryptoHelper.SymmetricDecrypt(encodedFilename, encryptionKey);
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+
+                file.FileName = Encoding.UTF8.GetString(filename).TrimEnd('\0');
+            }
+
+            _metadata.FilenamesEncrypted = false;
+            return true;
+        }
+
+        
+        /// <summary>
+        /// Write manifest to file
+        /// </summary>
+        /// <param name="path"></param>
+        /// <param name="stripSignature"></param>
+        public void Save(string path, bool stripSignature = true)
+        {
+            if (stripSignature)
+                _signature.Data = null;
+
+            new FileInfo(path).Directory?.Create();
+
+            path = path.Replace("\\", "/");
+            using (var fs = File.Open(path, FileMode.Create, FileAccess.Write))
+            {
+                _payload.WriteToStream(fs);
+                _metadata.WriteToStream(fs, _payload);
+                _signature.WriteToStream(fs);
+            }
+        }
+
+        #region PROTOBUF CLASSES
+
+        [ProtoContract()]
+        internal class Payload
+        {
+
+
+            [ProtoMember(1)]
+            public List<FileMapping> Mappings { get; set; }
+
+            public uint CrcClear;
+
+            public Payload() { }
+
+            public void WriteToStream(Stream stream)
+            {
+
+                RuntimeTypeModel typeModel = TypeModel.Create();
+                typeModel.UseImplicitZeroDefaults = false;
+                Mappings.Sort((x, y) => string.Compare(x.FileName, y.FileName, StringComparison.OrdinalIgnoreCase));
+                using (var memStream = new MemoryStream())
+                {
+                    typeModel.Serialize(memStream, this);
+                    int length = (int)memStream.Length;
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        ms.Write(BitConverter.GetBytes(length), 0, 4);
+                        ms.Write(memStream.ToArray(), 0, length);
+                        CrcClear = (uint)Crc32.Compute(ms.ToArray());
+                    }
+                    stream.Write(new byte[] { 0xd0, 0x17, 0xf6, 0x71 }, 0, 4);
+                    stream.Write(BitConverter.GetBytes(length), 0, 4);
+                    stream.Write(memStream.ToArray(), 0, length);
                 }
             }
 
-            public string FileName { get; set; }
 
-            public ulong TotalSize { get; set; }
-            public EDepotFileFlag Flags { get; set; }
 
-            public byte[] HashFileName { get; set; }
-            public byte[] HashContent { get; set; }
+        }
 
-            public uint NumChunks { get; set; }
-            public Chunk[] Chunks { get; private set; }
-
+        /// <summary>
+        /// Manifest FileMapping
+        /// </summary>
+        [ProtoContract()]
+        public class FileMapping
+        {
+            /// <inheritdoc />
             public FileMapping()
             {
             }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(1)]
+            public string FileName { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(2)]
+            public ulong Size { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(3)]
+            public EDepotFileFlag Flags { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(4)]
+            public byte[] ShaFilename { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(5)]
+            public byte[] ShaContent { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(6)]
+            public List<ChunkData> Chunks { get; set; }
 
+            /// <summary>
+            /// 
+            /// </summary>
+            public bool Valid { get; set; }
 
-            internal void Deserialize( BinaryReader ds )
+            /// <summary>
+            /// 
+            /// </summary>
+            public uint ParentDepotId;
+
+            /// <inheritdoc />
+            public override string ToString()
             {
-                FileName = ds.BaseStream.ReadNullTermString( Encoding.UTF8 );
+                return FileName;
+            }
+        }
 
-                TotalSize = ds.ReadUInt64();
+        /// <summary>
+        /// 
+        /// </summary>
+        [ProtoContract()]
+        public class ChunkData
+        {
+            /// <inheritdoc />
+            public ChunkData()
+            {
+            }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(1)]
+            public byte[] Sha { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(2, DataFormat = DataFormat.FixedSize)]
+            public uint Adler32 { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(3)]
+            public ulong Offset { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(4)]
+            public uint Size { get; set; }
+            /// <summary>
+            /// 
+            /// </summary>
+            [ProtoMember(5)]
+            public uint CompressedSize { get; set; }
 
-                Flags = (EDepotFileFlag)ds.ReadUInt32();
+            /// <summary>
+            /// 
+            /// </summary>
+            public bool Valid { get; set; } = false;
+            /// <summary>
+            /// 
+            /// </summary>
+            public FileMapping ParentMapping { get; set; }
+        }
 
-                HashContent = ds.ReadBytes( 20 );
-                HashFileName = ds.ReadBytes( 20 );
+        [ProtoContract()]
+        private class Metadata
+        {
 
-                NumChunks = ds.ReadUInt32();
-
-                Chunks = new Chunk[ NumChunks ];
-
-                for ( int x = 0 ; x < Chunks.Length ; ++x )
+            public void WriteToStream(Stream stream, Payload payload)
+            {
+                CrcClear = payload.CrcClear;
+                //RuntimeTypeModel typeModel = TypeModel.Create();
+                //typeModel.UseImplicitZeroDefaults = false;
+                using (var memStream = new MemoryStream())
                 {
-                    Chunks[ x ] = new Chunk();
-                    Chunks[ x ].Deserialize( ds );
+                    Serializer.Serialize(memStream, this);
+                    //typeModel.Serialize(memStream, this);
+                    int length = (int)memStream.Length;
+                    stream.Write(new byte[] { 0xbe, 0x12, 0x48, 0x1f }, 0, 4);
+                    stream.Write(BitConverter.GetBytes(length), 0, 4);
+                    stream.Write(memStream.ToArray(), 0, length);
                 }
             }
+
+            [ProtoMember(1, IsRequired = true)]
+            public uint DepotId { get; set; }
+            [ProtoMember(2, IsRequired = true)]
+            public ulong GidManifest { get; set; }
+            [ProtoMember(3, IsRequired = true)]
+            public uint CreationTime { get; set; }
+            [ProtoMember(4, IsRequired = true)]
+            public bool FilenamesEncrypted { get; set; }
+            [ProtoMember(5, IsRequired = true)]
+            public ulong SizeOnDisk { get; set; }
+            [ProtoMember(6, IsRequired = true)]
+            public ulong CompressedSizeOnDisk { get; set; }
+            [ProtoMember(7, IsRequired = true)]
+            public uint UniqueChunks { get; set; }
+            [ProtoMember(8)]
+            public uint CrcEncrypted { get; set; }
+            [ProtoMember(9)]
+            public uint CrcClear { get; set; }
         }
 
-        public const uint MAGIC = 0x16349781;
-        const uint CURRENT_VERSION = 4;
-
-        public uint Magic { get; set; }
-        public uint Version { get; set; } 
-
-        public uint DepotID { get; set; }
-
-        public ulong ManifestGID { get; set; }
-        public DateTime CreationTime { get; set; }
-
-        public bool AreFileNamesEncrypted { get; set; }
-
-        public ulong TotalUncompressedSize { get; set; }
-        public ulong TotalCompressedSize { get; set; }
-
-        public uint ChunkCount { get; set; }
-
-        public uint FileEntryCount { get; set; }
-        public uint FileMappingSize { get; set; }
-
-        public uint EncryptedCRC { get; set; }
-        public uint DecryptedCRC { get; set; }
-
-        public uint Flags { get; set; }
-
-        public List<FileMapping> Mapping { get; private set; }
-
-
-        private Steam3Manifest()
+        [ProtoContract()]
+        private class Signature
         {
-        }
-
-        public Steam3Manifest(byte[] data)
-        {
-            if (data == null)
+            public void WriteToStream(Stream stream)
             {
-                throw new ArgumentNullException(nameof(data));
+                RuntimeTypeModel typeModel = TypeModel.Create();
+                typeModel.UseImplicitZeroDefaults = false;
+
+                using (var memStream = new MemoryStream())
+                {
+                    typeModel.Serialize(memStream, this);
+                    stream.Write(new byte[] { 0x17, 0xB8, 0x81, 0x1B }, 0, 4);
+                    if (Data != null && Data.Length > 0)
+                    {
+                        stream.Write(BitConverter.GetBytes(Data.Length), 0, 4);
+                        stream.Write(Data, 0, Data.Length);
+                    }
+                    else
+                    {
+                        stream.Write(BitConverter.GetBytes(0), 0, 4);
+
+                    }
+
+                    stream.Write(new byte[] { 0xAB, 0x15, 0xC4, 0x32 }, 0, 4);
+                }
             }
 
-            Deserialize(data);
+
+            [ProtoMember(1)]
+            public byte[] Data { get; set; }
         }
-
-        internal Steam3Manifest(BinaryReader data)
-        {
-            Deserialize(data);
-        }
-
-        void Deserialize(byte[] data)
-        {
-            using ( var ms = new MemoryStream( data ) )
-            using ( var br = new BinaryReader( ms ) )
-            {
-                Deserialize( br );
-            }
-        }
-
-        void Deserialize( BinaryReader ds )
-        {
-            Magic = ds.ReadUInt32();
-
-            if (Magic != MAGIC)
-            {
-                throw new InvalidDataException("data is not a valid steam3 manifest: incorrect magic.");
-            }
-
-            Version = ds.ReadUInt32();
-
-            DepotID = ds.ReadUInt32();
-
-            ManifestGID = ds.ReadUInt64();
-            CreationTime = DateUtils.DateTimeFromUnixTime( ds.ReadUInt32() );
-
-            AreFileNamesEncrypted = ds.ReadUInt32() != 0;
-
-            TotalUncompressedSize = ds.ReadUInt64();
-            TotalCompressedSize = ds.ReadUInt64();
-
-            ChunkCount = ds.ReadUInt32();
-
-            FileEntryCount = ds.ReadUInt32();
-            FileMappingSize = ds.ReadUInt32();
-
-            Mapping = new List<FileMapping>( ( int )FileMappingSize );
-
-            EncryptedCRC = ds.ReadUInt32();
-            DecryptedCRC = ds.ReadUInt32();
-
-            Flags = ds.ReadUInt32();
-
-            for (uint i = FileMappingSize; i > 0; )
-            {
-                long start = ds.BaseStream.Position;
-
-                FileMapping mapping = new FileMapping();
-                mapping.Deserialize(ds);
-                Mapping.Add(mapping);
-
-                i -= (uint)(ds.BaseStream.Position - start);
-            }
-        }
-
+        #endregion
     }
-
 }

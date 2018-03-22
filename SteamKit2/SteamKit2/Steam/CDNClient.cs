@@ -14,6 +14,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using SteamKit2.Util;
 
 namespace SteamKit2
 {
@@ -138,7 +139,7 @@ namespace SteamKit2
             /// <summary>
             /// Gets the depot manifest chunk information associated with this chunk.
             /// </summary>
-            public DepotManifest.ChunkData ChunkInfo { get; internal set; }
+            public Manifest.ChunkData ChunkInfo { get; internal set; }
 
             /// <summary>
             /// Gets a value indicating whether this chunk has been processed. A chunk is processed when the data has been decrypted and decompressed.
@@ -181,9 +182,10 @@ namespace SteamKit2
                     processedData = ZipUtil.Decompress( processedData );
                 }
 
-                byte[] dataCrc = CryptoHelper.AdlerHash( processedData );
+                var adler = Adler32.ComputeHash(processedData);
+                
 
-                if ( !dataCrc.SequenceEqual( ChunkInfo.Checksum ) )
+                if ( adler != ChunkInfo.Adler32 )
                     throw new InvalidDataException( "Processed data checksum is incorrect! Downloaded depot chunk is corrupt or invalid/wrong depot key?" );
 
                 Data = processedData;
@@ -445,8 +447,8 @@ namespace SteamKit2
         /// </summary>
         /// <param name="depotId">The id of the depot being accessed.</param>
         /// <param name="manifestId">The unique identifier of the manifest to be downloaded.</param>
-        /// <returns>A <see cref="DepotManifest"/> instance that contains information about the files present within a depot.</returns>
-        public async Task<DepotManifest> DownloadManifestAsync( uint depotId, ulong manifestId )
+        /// <returns>A <see cref="Manifest"/> instance that contains information about the files present within a depot.</returns>
+        public async Task<Manifest> DownloadManifestAsync( uint depotId, ulong manifestId )
         {
             depotCdnAuthKeys.TryGetValue( depotId, out var cdnToken );
             depotKeys.TryGetValue( depotId, out var depotKey );
@@ -465,8 +467,8 @@ namespace SteamKit2
         /// The depot decryption key for the depot that will be downloaded.
         /// This is used for decrypting filenames (if needed) in depot manifests, and processing depot chunks.
         /// </param>
-        /// <returns>A <see cref="DepotManifest"/> instance that contains information about the files present within a depot.</returns>
-        public async Task<DepotManifest> DownloadManifestAsync( uint depotId, ulong manifestId, string host, string cdnAuthToken, byte[] depotKey = null )
+        /// <returns>A <see cref="Manifest"/> instance that contains information about the files present within a depot.</returns>
+        public async Task<Manifest> DownloadManifestAsync( uint depotId, ulong manifestId, string host, string cdnAuthToken, byte[] depotKey = null )
         {
             var server = new Server
             {
@@ -490,17 +492,17 @@ namespace SteamKit2
         /// Downloads the specified depot chunk, and optionally processes the chunk and verifies the checksum if the depot decryption key has been provided.
         /// </summary>
         /// <remarks>
-        /// This function will also validate the length of the downloaded chunk with the value of <see cref="DepotManifest.ChunkData.CompressedLength"/>,
+        /// This function will also validate the length of the downloaded chunk with the value of <see cref="Manifest.ChunkData.CompressedLength"/>,
         /// if it has been assigned a value.
         /// </remarks>
         /// <param name="depotId">The id of the depot being accessed.</param>
         /// <param name="chunk">
-        /// A <see cref="DepotManifest.ChunkData"/> instance that represents the chunk to download.
+        /// A <see cref="Manifest.ChunkData"/> instance that represents the chunk to download.
         /// This value should come from a manifest downloaded with <see cref="CDNClient.DownloadManifest"/>.
         /// </param>
         /// <returns>A <see cref="DepotChunk"/> instance that contains the data for the given chunk.</returns>
-        /// <exception cref="System.ArgumentNullException">chunk's <see cref="DepotManifest.ChunkData.ChunkID"/> was null.</exception>
-        public async Task<DepotChunk> DownloadDepotChunkAsync( uint depotId, DepotManifest.ChunkData chunk )
+        /// <exception cref="System.ArgumentNullException">chunk's <see cref="Manifest.ChunkData.ChunkID"/> was null.</exception>
+        public async Task<DepotChunk> DownloadDepotChunkAsync( uint depotId, Manifest.ChunkData chunk )
 #pragma warning restore 0419
 #pragma warning restore 1574
         {
@@ -509,7 +511,7 @@ namespace SteamKit2
                 throw new ArgumentNullException( nameof(chunk) );
             }
 
-            if ( chunk.ChunkID == null )
+            if ( chunk.Sha == null )
             {
                 throw new ArgumentException( "Chunk must have a ChunkID.", nameof(chunk) );
             }
@@ -531,12 +533,12 @@ namespace SteamKit2
         /// Downloads the specified depot chunk, and optionally processes the chunk and verifies the checksum if the depot decryption key has been provided.
         /// </summary>
         /// <remarks>
-        /// This function will also validate the length of the downloaded chunk with the value of <see cref="DepotManifest.ChunkData.CompressedLength"/>,
+        /// This function will also validate the length of the downloaded chunk with the value of <see cref="Manifest.ChunkData.CompressedLength"/>,
         /// if it has been assigned a value.
         /// </remarks>
         /// <param name="depotId">The id of the depot being accessed.</param>
         /// <param name="chunk">
-        /// A <see cref="DepotManifest.ChunkData"/> instance that represents the chunk to download.
+        /// A <see cref="Manifest.ChunkData"/> instance that represents the chunk to download.
         /// This value should come from a manifest downloaded with <see cref="CDNClient.DownloadManifest"/>.
         /// </param>
         /// <returns>A <see cref="DepotChunk"/> instance that contains the data for the given chunk.</returns>
@@ -546,8 +548,8 @@ namespace SteamKit2
         /// The depot decryption key for the depot that will be downloaded.
         /// This is used for decrypting filenames (if needed) in depot manifests, and processing depot chunks.
         /// </param>
-        /// <exception cref="System.ArgumentNullException">chunk's <see cref="DepotManifest.ChunkData.ChunkID"/> was null.</exception>
-        public async Task<DepotChunk> DownloadDepotChunkAsync( uint depotId, DepotManifest.ChunkData chunk, string host, string cdnAuthToken, byte[] depotKey = null)
+        /// <exception cref="System.ArgumentNullException">chunk's <see cref="Manifest.ChunkData.ChunkID"/> was null.</exception>
+        public async Task<DepotChunk> DownloadDepotChunkAsync( uint depotId, Manifest.ChunkData chunk, string host, string cdnAuthToken, byte[] depotKey = null)
 #pragma warning restore 1574
 #pragma warning restore 0419
         {
@@ -556,7 +558,7 @@ namespace SteamKit2
                 throw new ArgumentNullException( nameof(chunk) );
             }
 
-            if ( chunk.ChunkID == null )
+            if ( chunk.Sha == null )
             {
                 throw new ArgumentException( "Chunk must have a ChunkID.", nameof(chunk) );
             }
@@ -662,34 +664,34 @@ namespace SteamKit2
             return dataKv;
         }
 
-        async Task<DepotManifest> DownloadManifestCoreAsync( uint depotId, ulong manifestId, Server server, string cdnAuthToken, byte[] depotKey )
+        async Task<Manifest> DownloadManifestCoreAsync( uint depotId, ulong manifestId, Server server, string cdnAuthToken, byte[] depotKey )
         {
 
             var manifestData = await DoRawCommandAsync( server, HttpMethod.Get, "depot", doAuth: true, args: string.Format( "{0}/manifest/{1}/5", depotId, manifestId ), authtoken: cdnAuthToken ).ConfigureAwait( false );
 
             manifestData = ZipUtil.Decompress( manifestData );
 
-            var depotManifest = new DepotManifest( manifestData );
+            var Manifest = new Manifest( manifestData );
 
             if ( depotKey != null )
             {
                 // if we have the depot key, decrypt the manifest filenames
-                depotManifest.DecryptFilenames( depotKey );
+                Manifest.DecryptFilenames( depotKey );
             }
 
-            return depotManifest;
+            return Manifest;
         }
 
-        async Task<DepotChunk> DownloadDepotChunkCoreAsync( uint depotId, DepotManifest.ChunkData chunk, Server server, string cdnAuthToken, byte[] depotKey )
+        async Task<DepotChunk> DownloadDepotChunkCoreAsync( uint depotId, Manifest.ChunkData chunk, Server server, string cdnAuthToken, byte[] depotKey )
         {
-            var chunkID = Utils.EncodeHexString( chunk.ChunkID );
+            var chunkID = Utils.EncodeHexString( chunk.Sha );
 
             var chunkData = await DoRawCommandAsync( server, HttpMethod.Get, "depot", doAuth: true, args: string.Format( "{0}/chunk/{1}", depotId, chunkID ), authtoken: cdnAuthToken ).ConfigureAwait( false );
 
-            if ( chunk.CompressedLength != default( uint ) )
+            if ( chunk.CompressedSize != default( uint ) )
             {
                 // assert that lengths match only if the chunk has a length assigned.
-                DebugLog.Assert( chunkData.Length == chunk.CompressedLength, "CDNClient", "Length mismatch after downloading depot chunk!" );
+                DebugLog.Assert( chunkData.Length == chunk.CompressedSize, "CDNClient", "Length mismatch after downloading depot chunk!" );
             }
 
             var depotChunk = new DepotChunk
